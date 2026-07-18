@@ -4,7 +4,7 @@
  * Automatically fetches and updates the Tor exit node list from URL (HTTP/HTTPS)
  *
  * Copyright (c) 2025 Rumen Damyanov
- * Copyright (c) 2026 2026 Sebastian Enger / https://www.artikelschreiber.com/ / https://www.artikelschreiben.com/ / https://www.unaique.net/
+ * Copyright (c) 2026 Sebastian Enger / https://www.artikelschreiber.com/ / https://www.artikelschreiben.com/ / https://www.unaique.net/
  * Licensed under BSD License
  */
 
