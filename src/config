@@ -1,11 +1,15 @@
 ngx_addon_name=ngx_http_torblocker_module
 
+ngx_module_type=HTTP
+ngx_module_name=ngx_http_torblocker_module
+ngx_module_srcs="$ngx_addon_dir/ngx_http_torblocker_module.c"
+
 if test -n "$ngx_module_link"; then
-    ngx_module_type=HTTP
-    ngx_module_name=ngx_http_torblocker_module
-    ngx_module_srcs="$ngx_addon_dir/ngx_http_torblocker_module.c"
+    ngx_module_deps="$HTTP_SSL_MODULES"
     . auto/module
 else
     HTTP_MODULES="$HTTP_MODULES ngx_http_torblocker_module"
     NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_torblocker_module.c"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $HTTP_SSL_MODULES"
+    . auto/addons
 fi
