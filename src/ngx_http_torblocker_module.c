@@ -4,14 +4,39 @@
  * Automatically fetches and updates the Tor exit node list from URL (HTTP/HTTPS)
  *
  * Copyright (c) 2025 Rumen Damyanov
+ * Copyright (c) 2026 2026 Sebastian Enger / https://www.artikelschreiber.com/ / https://www.artikelschreiben.com/ / https://www.unaique.net/
  * Licensed under BSD License
  */
+
+/*
+2026 Sebastian Enger / https://www.artikelschreiber.com/ / https://www.artikelschreiben.com/ / https://www.unaique.net/
+New: Support for local tor-blocklist in Nginx-1.31.3+
+
+1. Prepare Nginx for Torblocker Support:
+wget https://nginx.org/download/nginx-1.31.3.tar.gz
+tar cfz nginx-1.31.3.tar.gz
+cd nginx-1.31.3
+./configure \
+--add-module=/tmp/nginx-torblocker/src \
+
+2. Dowload tor-blocklist:
+/usr/bin/curl --silent --insecure --output /etc/nginx/torbulkexitlist.conf https://check.torproject.org/torbulkexitlist
+
+3. Change Nginx for example in the initial http{}-Block:
+
+	resolver 8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 valid=3600s;
+    resolver_timeout 5s;
+
+	torblock_list_url "/etc/nginx/torbulkexitlist.conf";
+	torblock on;
+*/
 
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <ngx_event.h>
 #include <ngx_event_connect.h>
+#include <ngx_event_openssl.h> /* added for Nginx-1.31.3 Support, Sebastian Enger */
 #include "ngx_http_torblocker_module.h"
 
 /* Default values */
@@ -169,23 +194,26 @@ ngx_http_torblocker_create_main_conf(ngx_conf_t *cf)
 /*
  * Initialize main configuration
  */
+
+/* by Sebastian Enger, 2026-07-18 */
+/*
 static char *
 ngx_http_torblocker_init_main_conf(ngx_conf_t *cf, void *conf)
 {
     ngx_http_torblocker_main_conf_t *mcf = conf;
 
-    /* Set defaults */
+    // Set defaults 
     if (mcf->list_url.len == 0) {
         ngx_str_set(&mcf->list_url, NGX_HTTP_TORBLOCKER_DEFAULT_URL);
     }
 
     ngx_conf_init_msec_value(mcf->update_interval, NGX_HTTP_TORBLOCKER_DEFAULT_INTERVAL);
 
-    /* Store global reference for process init */
+    // Store global reference for process init 
     ngx_http_torblocker_main_conf = mcf;
 
 #if (NGX_HTTP_SSL)
-    /* Initialize SSL context if URL is HTTPS */
+    // Initialize SSL context if URL is HTTPS
     if (ngx_strncasecmp(mcf->list_url.data, (u_char *) "https://", 8) == 0) {
         if (ngx_http_torblocker_ssl_init(mcf, cf) != NGX_OK) {
             return NGX_CONF_ERROR;
@@ -195,6 +223,83 @@ ngx_http_torblocker_init_main_conf(ngx_conf_t *cf, void *conf)
 
     return NGX_CONF_OK;
 }
+*/
+/* by Sebastian Enger, 2026-07-18 */
+static char *
+ngx_http_torblocker_init_main_conf(ngx_conf_t *cf, void *conf)
+{
+    ngx_http_torblocker_main_conf_t *mcf = conf;
+    ngx_fd_t                         fd;
+    ngx_file_info_t                  fi;
+    u_char                          *buf;
+    ssize_t                          n;
+
+    if (mcf->list_url.len == 0) {
+        ngx_str_set(&mcf->list_url, NGX_HTTP_TORBLOCKER_DEFAULT_URL);
+    }
+
+    ngx_conf_init_msec_value(mcf->update_interval, NGX_HTTP_TORBLOCKER_DEFAULT_INTERVAL);
+    ngx_http_torblocker_main_conf = mcf;
+
+    /* Read local config file containing tor-blocklists */
+    if (ngx_strncasecmp(mcf->list_url.data, (u_char *) "/", 1) == 0 ||
+        ngx_strncasecmp(mcf->list_url.data, (u_char *) "file://", 7) == 0) 
+    {
+        ngx_str_t filepath = mcf->list_url;
+        if (ngx_strncasecmp(filepath.data, (u_char *) "file://", 7) == 0) {
+            filepath.data += 7;
+            filepath.len -= 7;
+        }
+
+        /* Read tor blocklist */
+        fd = ngx_open_file(filepath.data, NGX_FILE_RDONLY, NGX_FILE_OPEN, 0);
+        if (fd == NGX_INVALID_FILE) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, ngx_errno,
+                               "torblocker: failed to open local file \"%V\"", &filepath);
+            return NGX_CONF_ERROR;
+        }
+
+        if (ngx_fd_info(fd, &fi) == NGX_FILE_ERROR) {
+            ngx_close_file(fd);
+            return NGX_CONF_ERROR;
+        }
+
+        buf = ngx_palloc(cf->pool, fi.st_size);
+        if (buf == NULL) {
+            ngx_close_file(fd);
+            return NGX_CONF_ERROR;
+        }
+
+        n = ngx_read_fd(fd, buf, fi.st_size);
+        ngx_close_file(fd);
+
+        if (n != fi.st_size) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, ngx_errno,
+                               "torblocker: failed to read local file \"%V\"", &filepath);
+            return NGX_CONF_ERROR;
+        }
+
+        /* Read and parse file */
+        if (ngx_http_torblocker_parse_list(mcf, buf, n, cf->log) != NGX_OK) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "torblocker: failed to parse local IP list");
+            return NGX_CONF_ERROR;
+        }
+
+        ngx_conf_log_error(NGX_LOG_NOTICE, cf, 0,
+                           "torblocker: successfully loaded %ui IPs from local file", mcf->ip_count);
+    }
+#if (NGX_HTTP_SSL)
+    else if (ngx_strncasecmp(mcf->list_url.data, (u_char *) "https://", 8) == 0) {
+        if (ngx_http_torblocker_ssl_init(mcf, cf) != NGX_OK) {
+            return NGX_CONF_ERROR;
+        }
+    }
+#endif
+
+    return NGX_CONF_OK;
+}
+
 
 #if (NGX_HTTP_SSL)
 /*
@@ -292,6 +397,8 @@ ngx_http_torblocker_init(ngx_conf_t *cf)
 /*
  * Process initialization - start the update timer
  */
+
+/* by Sebastian Enger, 2026-07-18
 static ngx_int_t
 ngx_http_torblocker_init_process(ngx_cycle_t *cycle)
 {
@@ -304,18 +411,56 @@ ngx_http_torblocker_init_process(ngx_cycle_t *cycle)
 
     mcf->log = cycle->log;
 
-    /* Initialize the update event */
+    // Initialize the update event
     ngx_memzero(&mcf->update_event, sizeof(ngx_event_t));
     mcf->update_event.handler = ngx_http_torblocker_update_handler;
     mcf->update_event.data = mcf;
     mcf->update_event.log = cycle->log;
 
-    /* Trigger initial update after 1 second (let nginx fully start) */
+    // Trigger initial update after 1 second (let nginx fully start)
     ngx_add_timer(&mcf->update_event, 1000);
 
     ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
                   "torblocker: initialized, will fetch list from \"%V\"",
                   &mcf->list_url);
+
+    return NGX_OK;
+}
+*/
+
+/* by Sebastian Enger, 2026-07-18 */
+static ngx_int_t
+ngx_http_torblocker_init_process(ngx_cycle_t *cycle)
+{
+    ngx_http_torblocker_main_conf_t *mcf;
+    ngx_event_t                     *local_event;
+
+    mcf = ngx_http_torblocker_main_conf;
+    if (mcf == NULL) {
+        return NGX_OK;
+    }
+
+    mcf->log = cycle->log;
+
+    if (ngx_process != NGX_PROCESS_WORKER && ngx_process != NGX_PROCESS_SINGLE) {
+        return NGX_OK;
+    }
+
+    local_event = ngx_pcalloc(cycle->pool, sizeof(ngx_event_t));
+    if (local_event == NULL) {
+        return NGX_ERROR;
+    }
+
+    local_event->handler = ngx_http_torblocker_update_handler;
+    local_event->data = mcf;
+    local_event->log = cycle->log;
+    local_event->cancelable = 1;
+
+    ngx_memcpy(&mcf->update_event, local_event, sizeof(ngx_event_t));
+    /* Support for local tor-blocklist only */
+    /* ngx_add_timer(&mcf->update_event, 5000); */
+    ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0,
+                  "torblocker: safely initialized event loop in worker process");
 
     return NGX_OK;
 }
@@ -562,6 +707,7 @@ ngx_http_torblocker_read_handler(ngx_event_t *rev)
     c = rev->data;
     ctx = c->data;
 
+/* by Sebastian Enger, 2026-07-18
 #if (NGX_HTTP_SSL)
     if (ctx->ssl && c->ssl) {
         n = ngx_ssl_recv(c, ctx->response->last,
@@ -574,6 +720,9 @@ ngx_http_torblocker_read_handler(ngx_event_t *rev)
     n = ngx_recv(c, ctx->response->last,
                  ctx->response->end - ctx->response->last);
 #endif
+*/
+    /* by Sebastian Enger, 2026-07-18 */
+    n = c->recv(c, ctx->response->last, ctx->response->end - ctx->response->last);
 
     if (n == NGX_AGAIN) {
         if (ngx_handle_read_event(rev, 0) != NGX_OK) {
@@ -613,6 +762,7 @@ ngx_http_torblocker_send_request(ngx_http_torblocker_fetch_ctx_t *ctx)
 
     c = ctx->peer.connection;
 
+/* by Sebastian Enger, 2026-07-18
 #if (NGX_HTTP_SSL)
     if (ctx->ssl && c->ssl) {
         n = ngx_ssl_send(c, ctx->request->pos,
@@ -625,6 +775,9 @@ ngx_http_torblocker_send_request(ngx_http_torblocker_fetch_ctx_t *ctx)
     n = ngx_send(c, ctx->request->pos,
                  ctx->request->last - ctx->request->pos);
 #endif
+*/
+    /* by Sebastian Enger, 2026-07-18 */
+    n = c->send(c, ctx->request->pos, ctx->request->last - ctx->request->pos);
 
     if (n == NGX_ERROR) {
         ngx_log_error(NGX_LOG_ERR, ctx->mcf->log, 0,
