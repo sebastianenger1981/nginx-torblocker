@@ -1,6 +1,7 @@
 BSD 3-Clause License
 
 Copyright (c) 2025, Rumen Damyanov <contact@rumenx.com>
+
 Copyright (c) 2026, Sebastian Enger <sebastian.enger@artikelschreiber.com>
 
 Redistribution and use in source and binary forms, with or without
