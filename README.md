@@ -7,6 +7,8 @@
 
 A flexible Nginx module to control access from Tor exit nodes - block them, allow them exclusively, or mix policies.
 
+Added support for local tor-list support for latest NGINX 1.31.3 by Sebastian Enger / https://www.artikelschreiber.com/ / https://www.artikelschreiben.com/ / https://www.unaique.net/ on 2026-07-18
+
 ## Features
 
 - **Three operation modes:**
